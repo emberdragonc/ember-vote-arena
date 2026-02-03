@@ -9,6 +9,11 @@ import { baseSepolia } from 'viem/chains'
 
 const ORACLE_PRIVATE_KEY = process.env.ORACLE_PRIVATE_KEY as `0x${string}`
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY
+
+// Prefer Kimi K2.5 (much cheaper: $0.45/M input vs Haiku's higher cost)
+const USE_KIMI = !!OPENROUTER_API_KEY
+const AI_PROVIDER = USE_KIMI ? 'kimi' : (ANTHROPIC_API_KEY ? 'anthropic' : 'none')
 
 // Rate limiting config
 const RATE_LIMIT_WINDOW_MS = 60 * 1000 // 1 minute
@@ -146,14 +151,7 @@ function basicModeration(data: string, rules: string): ModerationResult {
   return { approved: true, moderationType: 'basic' }
 }
 
-async function aiModeration(data: string, rules: string): Promise<ModerationResult> {
-  if (!ANTHROPIC_API_KEY) {
-    log('warn', 'ANTHROPIC_API_KEY not configured, falling back to basic moderation')
-    return basicModeration(data, rules)
-  }
-  
-  try {
-    const systemPrompt = `You are a content moderator for a blockchain-based competition platform. 
+const MODERATION_SYSTEM_PROMPT = `You are a content moderator for a blockchain-based competition platform. 
 Your job is to evaluate submissions and determine if they should be approved.
 
 You must be:
@@ -168,7 +166,8 @@ Respond with a JSON object only:
   "confidence": number between 0-1
 }`
 
-    const userPrompt = `Evaluate this submission for a competition market.
+function getModerationPrompt(data: string, rules: string): string {
+  return `Evaluate this submission for a competition market.
 
 MARKET RULES:
 ${rules || 'No specific rules provided - use standard community guidelines'}
@@ -177,51 +176,61 @@ SUBMISSION CONTENT:
 ${data}
 
 Should this submission be approved? Respond with JSON only.`
+}
 
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
+function parseAIResponse(content: string): { approved: boolean; reason?: string; confidence?: number } | null {
+  try {
+    const jsonMatch = content.match(/\{[\s\S]*\}/)
+    if (jsonMatch) {
+      return JSON.parse(jsonMatch[0])
+    }
+  } catch {
+    // Parse failed
+  }
+  return null
+}
+
+async function kimiModeration(data: string, rules: string): Promise<ModerationResult> {
+  try {
+    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-api-key': ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01',
+        'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
+        'HTTP-Referer': 'https://arena.ember.engineer',
+        'X-Title': 'The Arena Oracle',
       },
       body: JSON.stringify({
-        model: 'claude-3-haiku-20240307',
+        model: 'moonshotai/kimi-k2.5',
         max_tokens: 256,
-        system: systemPrompt,
-        messages: [{ role: 'user', content: userPrompt }],
+        messages: [
+          { role: 'system', content: MODERATION_SYSTEM_PROMPT },
+          { role: 'user', content: getModerationPrompt(data, rules) },
+        ],
       }),
     })
 
     if (!response.ok) {
       const errorText = await response.text()
-      log('error', 'Anthropic API error', { status: response.status, error: errorText })
+      log('error', 'Kimi API error', { status: response.status, error: errorText })
       return basicModeration(data, rules)
     }
 
     const result = await response.json()
-    const content = result.content?.[0]?.text
+    const content = result.choices?.[0]?.message?.content
     
     if (!content) {
-      log('warn', 'Empty response from AI moderation')
+      log('warn', 'Empty response from Kimi moderation')
       return basicModeration(data, rules)
     }
 
-    // Parse JSON from response (handle markdown code blocks)
-    let parsed: { approved: boolean; reason?: string; confidence?: number }
-    try {
-      const jsonMatch = content.match(/\{[\s\S]*\}/)
-      if (jsonMatch) {
-        parsed = JSON.parse(jsonMatch[0])
-      } else {
-        throw new Error('No JSON found in response')
-      }
-    } catch (parseError) {
-      log('warn', 'Failed to parse AI response', { content })
+    const parsed = parseAIResponse(content)
+    if (!parsed) {
+      log('warn', 'Failed to parse Kimi response', { content })
       return basicModeration(data, rules)
     }
 
-    log('debug', 'AI moderation result', { 
+    log('debug', 'Kimi moderation result', { 
       approved: parsed.approved, 
       confidence: parsed.confidence,
       dataPreview: data.substring(0, 100)
@@ -235,11 +244,86 @@ Should this submission be approved? Respond with JSON only.`
     }
     
   } catch (error) {
-    log('error', 'AI moderation failed', { 
+    log('error', 'Kimi moderation failed', { 
       error: error instanceof Error ? error.message : String(error) 
     })
     return basicModeration(data, rules)
   }
+}
+
+async function anthropicModeration(data: string, rules: string): Promise<ModerationResult> {
+  try {
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': ANTHROPIC_API_KEY!,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model: 'claude-3-haiku-20240307',
+        max_tokens: 256,
+        system: MODERATION_SYSTEM_PROMPT,
+        messages: [{ role: 'user', content: getModerationPrompt(data, rules) }],
+      }),
+    })
+
+    if (!response.ok) {
+      const errorText = await response.text()
+      log('error', 'Anthropic API error', { status: response.status, error: errorText })
+      return basicModeration(data, rules)
+    }
+
+    const result = await response.json()
+    const content = result.content?.[0]?.text
+    
+    if (!content) {
+      log('warn', 'Empty response from Anthropic moderation')
+      return basicModeration(data, rules)
+    }
+
+    const parsed = parseAIResponse(content)
+    if (!parsed) {
+      log('warn', 'Failed to parse Anthropic response', { content })
+      return basicModeration(data, rules)
+    }
+
+    log('debug', 'Anthropic moderation result', { 
+      approved: parsed.approved, 
+      confidence: parsed.confidence,
+      dataPreview: data.substring(0, 100)
+    })
+
+    return {
+      approved: parsed.approved,
+      reason: parsed.reason,
+      moderationType: 'ai',
+      confidence: parsed.confidence,
+    }
+    
+  } catch (error) {
+    log('error', 'Anthropic moderation failed', { 
+      error: error instanceof Error ? error.message : String(error) 
+    })
+    return basicModeration(data, rules)
+  }
+}
+
+async function aiModeration(data: string, rules: string): Promise<ModerationResult> {
+  // Prefer Kimi K2.5 (much cheaper)
+  if (OPENROUTER_API_KEY) {
+    log('debug', 'Using Kimi K2.5 for moderation')
+    return kimiModeration(data, rules)
+  }
+  
+  // Fall back to Anthropic
+  if (ANTHROPIC_API_KEY) {
+    log('debug', 'Using Anthropic Haiku for moderation')
+    return anthropicModeration(data, rules)
+  }
+  
+  log('warn', 'No AI API key configured, falling back to basic moderation')
+  return basicModeration(data, rules)
 }
 
 // ============================================================================
@@ -445,12 +529,21 @@ export async function POST(request: NextRequest) {
 // Health check endpoint
 export async function GET() {
   const hasOracle = !!ORACLE_PRIVATE_KEY
-  const hasAI = !!ANTHROPIC_API_KEY
+  
+  let aiStatus: string
+  if (OPENROUTER_API_KEY) {
+    aiStatus = 'kimi-k2.5 (via OpenRouter)'
+  } else if (ANTHROPIC_API_KEY) {
+    aiStatus = 'claude-haiku (via Anthropic)'
+  } else {
+    aiStatus = 'disabled (using basic filter)'
+  }
   
   return NextResponse.json({
     status: 'ok',
     oracle: hasOracle ? 'configured' : 'missing',
-    aiModeration: hasAI ? 'enabled' : 'disabled (using basic filter)',
+    aiModeration: aiStatus,
+    aiProvider: AI_PROVIDER,
     rateLimit: `${RATE_LIMIT_MAX_REQUESTS} requests per ${RATE_LIMIT_WINDOW_MS / 1000}s`,
   })
 }

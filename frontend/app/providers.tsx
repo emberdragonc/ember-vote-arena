@@ -1,35 +1,37 @@
-'use client';
+'use client'
 
-import * as React from 'react';
-import {
-  RainbowKitProvider,
-  getDefaultConfig,
-  darkTheme,
-} from '@rainbow-me/rainbowkit';
-import { WagmiProvider } from 'wagmi';
-import { base, baseSepolia } from 'wagmi/chains';
-import { QueryClientProvider, QueryClient } from '@tanstack/react-query';
-import '@rainbow-me/rainbowkit/styles.css';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { WagmiProvider, createConfig, http } from 'wagmi'
+import { baseSepolia, base } from 'wagmi/chains'
+import { RainbowKitProvider, getDefaultConfig, darkTheme } from '@rainbow-me/rainbowkit'
+import '@rainbow-me/rainbowkit/styles.css'
 
 const config = getDefaultConfig({
-  appName: 'Smart Contract Frontend',
-  projectId: process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID || 'demo',
-  chains: [
-    process.env.NEXT_PUBLIC_CHAIN_ID === '8453' ? base : baseSepolia,
-  ],
-  ssr: true,
-});
+  appName: 'The Arena',
+  projectId: 'ember-vote-arena',
+  chains: [baseSepolia, base],
+  transports: {
+    [baseSepolia.id]: http(),
+    [base.id]: http(),
+  },
+})
 
-const queryClient = new QueryClient();
+const queryClient = new QueryClient()
 
 export function Providers({ children }: { children: React.ReactNode }) {
   return (
     <WagmiProvider config={config}>
       <QueryClientProvider client={queryClient}>
-        <RainbowKitProvider theme={darkTheme()}>
+        <RainbowKitProvider
+          theme={darkTheme({
+            accentColor: '#f97316',
+            accentColorForeground: 'white',
+            borderRadius: 'medium',
+          })}
+        >
           {children}
         </RainbowKitProvider>
       </QueryClientProvider>
     </WagmiProvider>
-  );
+  )
 }

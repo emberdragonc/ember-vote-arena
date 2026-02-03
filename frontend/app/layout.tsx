@@ -1,33 +1,42 @@
-import './globals.css';
-import type { Metadata } from 'next';
-import { Inter } from 'next/font/google';
-import { Analytics } from '@vercel/analytics/react';
-import { SpeedInsights } from '@vercel/speed-insights/next';
-import { Providers } from './providers';
+import type { Metadata } from 'next'
+import { Inter } from 'next/font/google'
+import './globals.css'
+import { Providers } from './providers'
+import { Analytics } from '@vercel/analytics/react'
+import { SpeedInsights } from '@vercel/speed-insights/next'
 
-const inter = Inter({ subsets: ['latin'] });
+const inter = Inter({ subsets: ['latin'] })
 
 export const metadata: Metadata = {
-  title: 'Smart Contract Frontend',
-  description: 'Built by Ember 🐉',
-};
+  title: 'The Arena | Community Voting Markets',
+  description: 'Create voting contests on any topic. Vote with any token on Base. Winners take the pot.',
+  openGraph: {
+    title: 'The Arena',
+    description: 'Community voting markets on Base',
+    images: ['/og-image.png'],
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'The Arena',
+    description: 'Community voting markets on Base',
+    creator: '@emberclawd',
+  },
+}
 
 export default function RootLayout({
   children,
 }: {
-  children: React.ReactNode;
+  children: React.ReactNode
 }) {
   return (
     <html lang="en">
-      <body className={inter.className}>
+      <body className={`${inter.className} bg-gray-900 text-white`}>
         <Providers>
           {children}
         </Providers>
-        {/* Vercel Analytics - tracks page views, visitors, etc. */}
         <Analytics />
-        {/* Vercel Speed Insights - tracks Core Web Vitals */}
         <SpeedInsights />
       </body>
     </html>
-  );
+  )
 }

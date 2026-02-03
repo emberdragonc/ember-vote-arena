@@ -10,10 +10,16 @@ import { baseSepolia } from 'viem/chains'
 const ORACLE_PRIVATE_KEY = process.env.ORACLE_PRIVATE_KEY as `0x${string}`
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY
+const NVIDIA_API_KEY = process.env.NVIDIA_API_KEY  // Free Kimi K2.5 via NVIDIA NIM
 
-// Prefer Kimi K2.5 (much cheaper: $0.45/M input vs Haiku's higher cost)
-const USE_KIMI = !!OPENROUTER_API_KEY
-const AI_PROVIDER = USE_KIMI ? 'kimi' : (ANTHROPIC_API_KEY ? 'anthropic' : 'none')
+// AI provider priority: NVIDIA (free) > OpenRouter (cheap) > Anthropic (paid)
+function getAIProvider(): 'nvidia' | 'openrouter' | 'anthropic' | 'none' {
+  if (NVIDIA_API_KEY) return 'nvidia'
+  if (OPENROUTER_API_KEY) return 'openrouter'
+  if (ANTHROPIC_API_KEY) return 'anthropic'
+  return 'none'
+}
+const AI_PROVIDER = getAIProvider()
 
 // Rate limiting config
 const RATE_LIMIT_WINDOW_MS = 60 * 1000 // 1 minute
@@ -309,16 +315,79 @@ async function anthropicModeration(data: string, rules: string): Promise<Moderat
   }
 }
 
+async function nvidiaModeration(data: string, rules: string): Promise<ModerationResult> {
+  try {
+    const response = await fetch('https://integrate.api.nvidia.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${NVIDIA_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: 'moonshotai/kimi-k2.5',
+        max_tokens: 256,
+        messages: [
+          { role: 'system', content: MODERATION_SYSTEM_PROMPT },
+          { role: 'user', content: getModerationPrompt(data, rules) },
+        ],
+      }),
+    })
+
+    if (!response.ok) {
+      const errorText = await response.text()
+      log('error', 'NVIDIA API error', { status: response.status, error: errorText })
+      return basicModeration(data, rules)
+    }
+
+    const result = await response.json()
+    const content = result.choices?.[0]?.message?.content
+    
+    if (!content) {
+      log('warn', 'Empty response from NVIDIA moderation')
+      return basicModeration(data, rules)
+    }
+
+    const parsed = parseAIResponse(content)
+    if (!parsed) {
+      log('warn', 'Failed to parse NVIDIA response', { content })
+      return basicModeration(data, rules)
+    }
+
+    log('debug', 'NVIDIA Kimi moderation result', { 
+      approved: parsed.approved, 
+      confidence: parsed.confidence,
+      dataPreview: data.substring(0, 100)
+    })
+
+    return {
+      approved: parsed.approved,
+      reason: parsed.reason,
+      moderationType: 'ai',
+      confidence: parsed.confidence,
+    }
+    
+  } catch (error) {
+    log('error', 'NVIDIA moderation failed', { 
+      error: error instanceof Error ? error.message : String(error) 
+    })
+    return basicModeration(data, rules)
+  }
+}
+
 async function aiModeration(data: string, rules: string): Promise<ModerationResult> {
-  // Prefer Kimi K2.5 (much cheaper)
+  // Priority: NVIDIA (free) > OpenRouter (cheap) > Anthropic (paid)
+  if (NVIDIA_API_KEY) {
+    log('debug', 'Using Kimi K2.5 via NVIDIA (free)')
+    return nvidiaModeration(data, rules)
+  }
+  
   if (OPENROUTER_API_KEY) {
-    log('debug', 'Using Kimi K2.5 for moderation')
+    log('debug', 'Using Kimi K2.5 via OpenRouter')
     return kimiModeration(data, rules)
   }
   
-  // Fall back to Anthropic
   if (ANTHROPIC_API_KEY) {
-    log('debug', 'Using Anthropic Haiku for moderation')
+    log('debug', 'Using Anthropic Haiku')
     return anthropicModeration(data, rules)
   }
   
@@ -531,7 +600,9 @@ export async function GET() {
   const hasOracle = !!ORACLE_PRIVATE_KEY
   
   let aiStatus: string
-  if (OPENROUTER_API_KEY) {
+  if (NVIDIA_API_KEY) {
+    aiStatus = 'kimi-k2.5 (via NVIDIA NIM - FREE)'
+  } else if (OPENROUTER_API_KEY) {
     aiStatus = 'kimi-k2.5 (via OpenRouter)'
   } else if (ANTHROPIC_API_KEY) {
     aiStatus = 'claude-haiku (via Anthropic)'

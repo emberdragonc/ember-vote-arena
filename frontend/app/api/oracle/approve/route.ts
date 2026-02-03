@@ -87,11 +87,11 @@ function checkRateLimit(ip: string): { allowed: boolean; remaining: number; rese
   
   // Clean up old entries periodically
   if (rateLimitStore.size > 10000) {
-    for (const [key, value] of rateLimitStore.entries()) {
+    rateLimitStore.forEach((value, key) => {
       if (now - value.windowStart > RATE_LIMIT_WINDOW_MS) {
         rateLimitStore.delete(key)
       }
-    }
+    })
   }
   
   if (!entry || now - entry.windowStart > RATE_LIMIT_WINDOW_MS) {

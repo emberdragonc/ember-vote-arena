@@ -1,6 +1,9 @@
 {
   "/_not-found/page": "app/_not-found/page.js",
+  "/api/oracle/approve/route": "app/api/oracle/approve/route.js",
   "/create/page": "app/create/page.js",
+  "/market/[id]/page": "app/market/[id]/page.js",
+  "/market/[id]/submit/page": "app/market/[id]/submit/page.js",
   "/page": "app/page.js",
-  "/market/[id]/page": "app/market/[id]/page.js"
+  "/profile/page": "app/profile/page.js"
 }

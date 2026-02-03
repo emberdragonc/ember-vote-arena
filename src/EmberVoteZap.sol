@@ -126,10 +126,7 @@ contract EmberVoteZap is Ownable {
         arena.vote(marketId, entryId, voteAmount);
         
         // Refund any excess EMBER
-        uint256 remaining = ember.balanceOf(address(this));
-        if (remaining > 0) {
-            ember.safeTransfer(msg.sender, remaining);
-        }
+        _refundExcess();
         
         emit ZapAndVote(msg.sender, tokenIn, amountIn, emberReceived, marketId, entryId, voteAmount);
     }
@@ -157,10 +154,7 @@ contract EmberVoteZap is Ownable {
         marketId = arena.createMarket(title, rules, entryCost, entryDuration, voteDuration);
         
         // Refund excess
-        uint256 remaining = ember.balanceOf(address(this));
-        if (remaining > 0) {
-            ember.safeTransfer(msg.sender, remaining);
-        }
+        _refundExcess();
         
         emit ZapAndCreateMarket(msg.sender, tokenIn, amountIn, emberReceived, marketId);
     }
@@ -187,12 +181,19 @@ contract EmberVoteZap is Ownable {
         entryId = arena.submitEntry(marketId, data, approved, signature);
         
         // Refund excess
+        _refundExcess();
+        
+        emit ZapAndSubmitEntry(msg.sender, tokenIn, amountIn, emberReceived, marketId, entryId);
+    }
+    
+    /**
+     * @notice Refund any excess EMBER to sender
+     */
+    function _refundExcess() internal {
         uint256 remaining = ember.balanceOf(address(this));
         if (remaining > 0) {
             ember.safeTransfer(msg.sender, remaining);
         }
-        
-        emit ZapAndSubmitEntry(msg.sender, tokenIn, amountIn, emberReceived, marketId, entryId);
     }
     
     /**

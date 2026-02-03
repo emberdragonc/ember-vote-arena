@@ -126,6 +126,7 @@ contract EmberVoteArena is Ownable {
     error EntryDoesNotExist();
     error CannotVoteOnFilteredEntry();
     error TransferFailed();
+    error ZeroAddress();
     
     // ============ Constructor ============
     constructor(
@@ -134,6 +135,11 @@ contract EmberVoteArena is Ownable {
         address _stakingDrip,
         address _burnAddress
     ) Ownable(msg.sender) {
+        if (_emberToken == address(0)) revert ZeroAddress();
+        if (_oracle == address(0)) revert ZeroAddress();
+        if (_stakingDrip == address(0)) revert ZeroAddress();
+        if (_burnAddress == address(0)) revert ZeroAddress();
+        
         emberToken = IERC20(_emberToken);
         oracle = _oracle;
         stakingDrip = _stakingDrip;
@@ -302,10 +308,13 @@ contract EmberVoteArena is Ownable {
         
         uint256 startPrice = _curvePrice(currentTotalVotes, baseCost);
         uint256 endPrice = _curvePrice(currentTotalVotes + numVotes, baseCost);
-        uint256 avgPrice = (startPrice + endPrice) / 2;
         
-        cost = avgPrice * numVotes / 1e18;
-        if (cost == 0) cost = baseCost * numVotes / 1e18; // Minimum 1 EMBER per vote
+        // Multiply first, then divide to avoid precision loss
+        cost = (startPrice + endPrice) * numVotes / 2 / 1e18;
+        
+        // Minimum 1 EMBER per vote (use >= to avoid strict equality)
+        uint256 minCost = baseCost * numVotes / 1e18;
+        if (cost < minCost) cost = minCost;
     }
     
     function _curvePrice(uint256 totalVotes, uint256 baseCost) internal view returns (uint256) {
@@ -354,12 +363,12 @@ contract EmberVoteArena is Ownable {
         }
         
         // Find top 3
-        (uint256 first, uint256 second, uint256 third) = _findTopThree(marketId, entryIds);
+        (uint256 first, uint256 second, uint256 third, bool hasThird) = _findTopThree(marketId, entryIds);
         
         emit MarketResolved(marketId, first, second, third);
         
         // Distribute payouts
-        _distributePayout(marketId, first, second, third);
+        _distributePayout(marketId, first, second, third, hasThird);
     }
     
     function _countValidEntries(uint256 marketId, uint256[] memory entryIds) internal view returns (uint256 count) {
@@ -396,15 +405,17 @@ contract EmberVoteArena is Ownable {
     function _findTopThree(
         uint256 marketId,
         uint256[] memory entryIds
-    ) internal view returns (uint256 first, uint256 second, uint256 third) {
+    ) internal view returns (uint256 first, uint256 second, uint256 third, bool hasThird) {
         uint256 firstVotes;
         uint256 secondVotes;
         uint256 thirdVotes;
+        uint256 validCount;
         
         for (uint256 i = 0; i < entryIds.length; i++) {
             Entry storage entry = entries[marketId][entryIds[i]];
             if (entry.filtered) continue;
             
+            validCount++;
             uint256 votes = entry.votes;
             uint256 entryId = entryIds[i];
             
@@ -426,13 +437,16 @@ contract EmberVoteArena is Ownable {
                 thirdVotes = votes;
             }
         }
+        
+        hasThird = validCount >= 3;
     }
     
     function _distributePayout(
         uint256 marketId,
         uint256 first,
         uint256 second,
-        uint256 third
+        uint256 third,
+        bool hasThird
     ) internal {
         Market storage market = markets[marketId];
         uint256 pot = market.totalPot;
@@ -475,6 +489,12 @@ contract EmberVoteArena is Ownable {
         uint256 stakersPayout = STAKERS_BPS * pot / 10000;
         uint256 initiatorPayout = INITIATOR_BPS * pot / 10000;
         
+        // If no third place, add third prize to stakers
+        if (!hasThird) {
+            stakersPayout += thirdPayout;
+            thirdPayout = 0;
+        }
+        
         // Transfer payouts (CEI: state already updated above)
         if (firstPayout > 0 && e1.author != address(0)) {
             emberToken.safeTransfer(e1.author, firstPayout);
@@ -484,7 +504,7 @@ contract EmberVoteArena is Ownable {
             emberToken.safeTransfer(e2.author, secondPayout);
             emit PayoutDistributed(marketId, e2.author, secondPayout, "second");
         }
-        if (thirdPayout > 0 && e3.author != address(0)) {
+        if (hasThird && thirdPayout > 0 && e3.author != address(0)) {
             emberToken.safeTransfer(e3.author, thirdPayout);
             emit PayoutDistributed(marketId, e3.author, thirdPayout, "third");
         }
@@ -555,10 +575,12 @@ contract EmberVoteArena is Ownable {
     }
     
     function setStakingDrip(address newDrip) external onlyOwner {
+        if (newDrip == address(0)) revert ZeroAddress();
         stakingDrip = newDrip;
     }
     
     function setBurnAddress(address newBurn) external onlyOwner {
+        if (newBurn == address(0)) revert ZeroAddress();
         burnAddress = newBurn;
     }
 }

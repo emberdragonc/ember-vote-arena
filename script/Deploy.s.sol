@@ -7,8 +7,8 @@ import {EmberVoteZap} from "../src/EmberVoteZap.sol";
 
 contract DeployScript is Script {
     // Base Mainnet addresses
-    address constant EMBER_TOKEN = 0xFf18CbE8b299465731D1C1536B7A8f8F4aa5e2Cf;
-    address constant STAKING_DRIP = 0x10D53Fe977d0069D046e5Fc9F0f0eB2659797b37; // 30-day drip
+    address constant EMBER_TOKEN = 0xFf18cBE8b299465731D1C1536B7a8f8F4aa5e2cf;
+    address constant STAKING_DRIP = 0x10d53fe977d0069D046e5Fc9F0f0EB2659797b37; // 30-day drip
     address constant BURN_ADDRESS = 0x000000000000000000000000000000000000dEaD;
     address constant KYBER_ROUTER = 0x6131B5fae19EA4f9D964eAc0408E4408b66337b5; // Kyber on Base
     

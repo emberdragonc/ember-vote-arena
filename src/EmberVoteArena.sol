@@ -24,6 +24,7 @@ contract EmberVoteArena is Ownable {
     uint256 public constant DEFAULT_ENTRY_DURATION = 6 hours;
     uint256 public constant DEFAULT_VOTE_DURATION = 6 hours;
     uint256 public constant MIN_ENTRIES_TO_PROCEED = 2;
+    uint256 public constant MAX_ENTRIES = 100;  // Prevent DoS via gas exhaustion
     
     // Payout splits (basis points, 10000 = 100%)
     uint256 public constant FIRST_PLACE_BPS = 5500;  // 55%
@@ -74,6 +75,7 @@ contract EmberVoteArena is Ownable {
     mapping(uint256 => mapping(uint256 => Entry)) public entries;  // marketId => entryId => Entry
     mapping(uint256 => mapping(address => uint256)) public userVotes;  // marketId => user => total votes cast
     mapping(uint256 => uint256[]) public marketEntryIds;  // marketId => array of entry IDs
+    mapping(bytes32 => bool) public usedSignatures;  // Prevent signature replay
     
     // ============ Events ============
     event MarketCreated(
@@ -127,6 +129,8 @@ contract EmberVoteArena is Ownable {
     error CannotVoteOnFilteredEntry();
     error TransferFailed();
     error ZeroAddress();
+    error MaxEntriesReached();
+    error SignatureAlreadyUsed();
     
     // ============ Constructor ============
     constructor(
@@ -211,6 +215,7 @@ contract EmberVoteArena is Ownable {
         Market storage market = markets[marketId];
         
         if (market.initiator == address(0)) revert InvalidMarket();
+        if (market.entryCount >= MAX_ENTRIES) revert MaxEntriesReached();
         if (block.timestamp > market.entryEnd) {
             // Transition to voting phase if needed
             if (market.state == MarketState.EntryPhase) {
@@ -219,8 +224,12 @@ contract EmberVoteArena is Ownable {
             revert MarketNotInEntryPhase();
         }
         
-        // Verify oracle signature
+        // Verify oracle signature and prevent replay
         bytes32 messageHash = keccak256(abi.encodePacked(marketId, data, approved));
+        bytes32 sigHash = keccak256(signature);
+        if (usedSignatures[sigHash]) revert SignatureAlreadyUsed();
+        usedSignatures[sigHash] = true;
+        
         bytes32 ethSignedHash = messageHash.toEthSignedMessageHash();
         address signer = ethSignedHash.recover(signature);
         if (signer != oracle) revert InvalidSignature();

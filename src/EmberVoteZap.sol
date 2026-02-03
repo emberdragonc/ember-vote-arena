@@ -267,11 +267,14 @@ contract EmberVoteZap is Ownable {
     
     function rescueTokens(address token, uint256 amount) external onlyOwner {
         if (token == address(0)) {
-            payable(owner()).transfer(amount);
+            (bool success, ) = payable(owner()).call{value: amount}("");
+            if (!success) revert TransferFailed();
         } else {
             IERC20(token).safeTransfer(owner(), amount);
         }
     }
+    
+    error TransferFailed();
     
     receive() external payable {}
 }
